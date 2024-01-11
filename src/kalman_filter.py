@@ -34,7 +34,7 @@ def get_centroid(od_box: list) -> coordinate:
 
 
 class Plate:
-    def __init__(self, id_number: int, coord: coordinate):
+    def __init__(self, id_number: int, coord: coordinate, confidence: float):
         """
         Given the x,y coordinate of the center of a bounding box from
         the object detection model, creates a Plate object for tracking
@@ -47,7 +47,7 @@ class Plate:
         self.velocity_x = 0      # estimated x velocity at current time
         self.velocity_y = 0      # estimated y velocity at current time
         self.not_detected = 0    # number of frames where plate has not been detected
-        self.confidence = .95    # TODO get from confidence from detection
+        self.confidence = confidence  # model confidence in location
 
     def predict(self):
         """
@@ -59,7 +59,7 @@ class Plate:
         self.prior = coordinate(new_x, new_y)
         self.confidence *= 0.7  # TODO: fine tune, maybe make it a constant at the top
 
-    def update(self, z: coordinate):
+    def update(self, z: coordinate, confidence: float):
         """
         using a measurement from object detection model update
         velocity, previous location, and current prediction.
@@ -76,7 +76,7 @@ class Plate:
         new_x = int((self.prior.x + z.x) / 2)
         new_y = int((self.prior.y + z.y) / 2)
         self.prior = coordinate(new_x, new_y)
-        self.confidence = 0.95    # TODO: get confidence from model
+        self.confidence = confidence          # model confidence in location
 
     def match_measurment(self, z: coordinate):
         """
@@ -121,6 +121,7 @@ class Kalman:
         detections = self.model(frame).pred[0]
         for det in detections:
             x1, y1, x2, y2, conf, cat = det.numpy()
+            print(f'type conf: {type(conf)}')
             box = [x1, y1, x2, y2]
             match = False
             center = get_centroid(box)
@@ -132,13 +133,13 @@ class Kalman:
                     self.plates.remove(plate)
                     # prediction followed by kalman update
                     plate.predict()
-                    plate.update(center)
+                    plate.update(center, conf)
                     # draw prediction marker
                     cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
                     break
 
             if not match:  # create new plate with measurement
-                new_plate = Plate(self.new_ID, center)
+                new_plate = Plate(self.new_ID, center, conf)
                 self.new_ID += 1
                 detected_plates.append(new_plate)
 
