@@ -7,8 +7,8 @@ import numpy as np
 from collections import namedtuple
 
 PRED_COLOR = (0, 255, 0)     # prediction marker color (green)
-Z_COLOR = (255, 165, 0)      # measurment box color    (cyan)
-PRED_THICKNES = 2            # thickness of marker line
+Z_COLOR = (255, 165, 0)      # measurement box color    (cyan)
+PRED_THICKNESS = 2            # thickness of marker line
 PRED_SIZE = 10               # size of marker
 PRED_TYPE = 0                # A crosshair marker shape
 NUM_FRAMES_TO_DISCARD = 10
@@ -16,11 +16,12 @@ OD_MODEL = torch.hub.load("ultralytics/yolov5", "custom", path='best.pt', force_
 
 coordinate = namedtuple("Coordinate", ["x", "y"])         # int x / int y
 
-def get_centroid(od_box:list):
+
+def get_centroid(od_box: list) -> coordinate:
     """
     Takes a bounding box from an object detection model and finds center of box
     :param od_box: list [x1, y1, x2, y2]
-    :return: coordinate (x_coordinate, y_coordinate)
+    :return: centroid coordinate (x_coordinate, y_coordinate)
     """
     x_1 = od_box[0]
     y_1 = od_box[1]
@@ -31,8 +32,9 @@ def get_centroid(od_box:list):
     centroid = coordinate(x_c, y_c)
     return centroid
 
+
 class Plate:
-    def __init__(self, id_number:int, coord:coordinate):
+    def __init__(self, id_number: int, coord: coordinate):
         """
         Given the x,y coordinate of the center of a bounding box from
         the object detection model, creates a Plate object for tracking
@@ -45,7 +47,7 @@ class Plate:
         self.velocity_x = 0      # estimated x velocity at current time
         self.velocity_y = 0      # estimated y velocity at current time
         self.not_detected = 0    # number of frames where plate has not been detected
-        # self.confidence = TODO
+        self.confidence = .95    # TODO get from confidence from detection
 
     def predict(self):
         """
@@ -55,9 +57,9 @@ class Plate:
         new_x = self.prior.x + self.velocity_x
         new_y = self.prior.y + self.velocity_y
         self.prior = coordinate(new_x, new_y)
-        # TODO: Update self.confidence
+        self.confidence *= 0.7  # TODO: fine tune, maybe make it a constant at the top
 
-    def update(self, z:coordinate):
+    def update(self, z: coordinate):
         """
         using a measurement from object detection model update
         velocity, previous location, and current prediction.
@@ -71,20 +73,21 @@ class Plate:
         # prev update
         self.prev = z
         # prior update
-        new_x = int( (self.prior.x + z.x) / 2)
-        new_y = int( (self.prior.y + z.y) / 2)
+        new_x = int((self.prior.x + z.x) / 2)
+        new_y = int((self.prior.y + z.y) / 2)
         self.prior = coordinate(new_x, new_y)
-        # TODO: Update self.confidence
+        self.confidence = 0.95    # TODO: get confidence from model
 
-    def match_measurment(self, z:coordinate):
+    def match_measurment(self, z: coordinate):
         """
         checks if z coordinate (center of bounding box) matches plate
         :param z: coordinate (x,y) center of bounding box
         :return: bool if True, outputs information to console
         """
-        x_match = (self.prior.x  - 5 < z.x) and (z.x < self.prior.x + 5)
-        y_match = (self.prior.y  - 5 < z.y) and (z.y < self.prior.y + 5)
+        x_match = (self.prior.x - 5 < z.x) and (z.x < self.prior.x + 5)
+        y_match = (self.prior.y - 5 < z.y) and (z.y < self.prior.y + 5)
         return x_match and y_match
+
 
 class Kalman:
     def __init__(self, model, testing=False):
@@ -124,14 +127,14 @@ class Kalman:
             for plate in self.plates:
                 if plate.match_measurment(center):
                     match = True
-                    plate.not_detected = 0
+                    plate.not_detected = 0    # TODO: Remove once confidence logic complete
                     detected_plates.append(plate)
                     self.plates.remove(plate)
                     # prediction followed by kalman update
                     plate.predict()
                     plate.update(center)
                     # draw prediction marker
-                    cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNES)
+                    cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
                     break
 
             if not match:  # create new plate with measurement
@@ -147,19 +150,21 @@ class Kalman:
         for plate in self.plates:
             plate.predict()        # predict location, no kalman update
             # draw prediction marker
-            cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNES)
-            plate.not_detected += 1
+            cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
+            plate.not_detected += 1    # TODO: remove once confidence logic complete
             self.plates.remove(plate)
-            if plate.not_detected < NUM_FRAMES_TO_DISCARD:
+            # if plate.not_detected < NUM_FRAMES_TO_DISCARD:
+            if plate.confidence >= 0.02:     # TODO: Make this a constant at the top? note: 0.95 * 0.7^(10) = 0.026
+                # otherwise plate is discarded
                 undetected_plates.append(plate)
-
 
         self.plates = detected_plates
         self.plates.extend(undetected_plates)
 
         return frame, detected_plates
 
-def loop(filepath:str, od_model):
+
+def loop(filepath: str, od_model):
     """
     loops over frames in a video and applies
     kalman filter to each frame in sequence.

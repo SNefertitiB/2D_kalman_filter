@@ -74,19 +74,20 @@ Step 2: Update (if the object is detected)
 To track multiple objects you need to: 
 
 1) correctly assign each measurement to a tracker
+
+2) use the distance formula to figure out which measurement is closest to the pre-update prediction
+
+3) use that measurement to update the prediction
+
+4) if distance to the closest prediction is greater than some threshold, don't assign the measurement to any tracker
     
-    use the distance formula to figure out which measurement is closest to the pre-update prediction
-    
-    use that measurement to update the prediction
-    
-    if distance to the closest prediction is greater than some threshold, don't assign the measurement to any tracker
-    
-    note: any trackers that don't recieve a measurement for a given frame will skip the update step of the Kalman filter
-2) for any unassigned measurememnts, initialize a new tracker object 
+   note: any trackers that don't receive a measurement for a given frame will skip the update step of the Kalman filter
+
+5) for any unassigned measurements, initialize a new tracker object 
 
 ## Future updates
-1) get rid of duplicate measurments
-2) use distance formula to find nearest measurement for known plates
+1) get rid of duplicate measurements
+2) use distance formula to find the nearest measurement for known plates
 3) implement a confidence measurement for each plate location
 4) discard known plate after confidence drops below some threshold
 
