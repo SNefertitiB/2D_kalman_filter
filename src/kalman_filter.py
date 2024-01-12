@@ -11,7 +11,8 @@ Z_COLOR = (255, 165, 0)      # measurement box color    (cyan)
 PRED_THICKNESS = 2            # thickness of marker line
 PRED_SIZE = 10               # size of marker
 PRED_TYPE = 0                # A crosshair marker shape
-NUM_FRAMES_TO_DISCARD = 10
+PERCENT_TO_DISCARD = 0.02
+PREDICTION_CONFIDENCE = 0.7   # note: 0.95 * 0.7^(10) = 0.026
 OD_MODEL = torch.hub.load("ultralytics/yolov5", "custom", path='best.pt', force_reload=True)
 
 coordinate = namedtuple("Coordinate", ["x", "y"])         # int x / int y
@@ -57,7 +58,7 @@ class Plate:
         new_x = self.prior.x + self.velocity_x
         new_y = self.prior.y + self.velocity_y
         self.prior = coordinate(new_x, new_y)
-        self.confidence *= 0.7  # TODO: fine tune, maybe make it a constant at the top
+        self.confidence *= PREDICTION_CONFIDENCE
 
     def update(self, z: coordinate, confidence: float):
         """
@@ -65,6 +66,7 @@ class Plate:
         velocity, previous location, and current prediction.
         Current prediction is average of measurment and predicted prior.
         :param z: coordinate (x,y) center of bounding box
+        :param confidence: float model's confidence in the detection
         :return: None
         """
         # velocity update
@@ -121,14 +123,12 @@ class Kalman:
         detections = self.model(frame).pred[0]
         for det in detections:
             x1, y1, x2, y2, conf, cat = det.numpy()
-            print(f'type conf: {type(conf)}')
             box = [x1, y1, x2, y2]
             match = False
             center = get_centroid(box)
             for plate in self.plates:
                 if plate.match_measurment(center):
                     match = True
-                    plate.not_detected = 0    # TODO: Remove once confidence logic complete
                     detected_plates.append(plate)
                     self.plates.remove(plate)
                     # prediction followed by kalman update
@@ -152,10 +152,8 @@ class Kalman:
             plate.predict()        # predict location, no kalman update
             # draw prediction marker
             cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
-            plate.not_detected += 1    # TODO: remove once confidence logic complete
             self.plates.remove(plate)
-            # if plate.not_detected < NUM_FRAMES_TO_DISCARD:
-            if plate.confidence >= 0.02:     # TODO: Make this a constant at the top? note: 0.95 * 0.7^(10) = 0.026
+            if plate.confidence >= PERCENT_TO_DISCARD:
                 # otherwise plate is discarded
                 undetected_plates.append(plate)
 
