@@ -148,6 +148,7 @@ class Kalman:
             end = coordinate(int(x2), int(y2))
             cv2.rectangle(frame, start, end, Z_COLOR, 2)
 
+        """Version 1"""
         for plate in self.plates:
             plate.predict()        # predict location, no kalman update
             # draw prediction marker
@@ -156,9 +157,23 @@ class Kalman:
             if plate.confidence >= PERCENT_TO_DISCARD:
                 # otherwise plate is discarded
                 undetected_plates.append(plate)
-
         self.plates = detected_plates
         self.plates.extend(undetected_plates)
+        """Version 2"""
+        # plates = detected_plates
+        # for plate in self.plates:
+        #     plate.predict()        # predict location, no kalman update
+        #     if plate.confidence >= PERCENT_TO_DISCARD:
+        #         # draw prediction marker
+        #         cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
+        #         plates.append(plate)
+        #     else:
+        #         # discard
+        #         self.plates.remove(plate)
+        # # undetected_plates = self.plates
+        # self.plates = plates
+        # # self.plates.extend(undetected_plates)
+
 
         return frame, detected_plates
 
