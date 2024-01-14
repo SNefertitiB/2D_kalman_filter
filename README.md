@@ -88,8 +88,7 @@ To track multiple objects you need to:
 ## Future updates
 1) get rid of duplicate measurements
 2) use distance formula to find the nearest measurement for known plates
-3) implement a confidence measurement for each plate location
-4) discard known plate after confidence drops below some threshold
+
 
 [1]: https://www.google.com/search?q=play+mp4+in+colab&rlz=1C5CHFA_enUS904US904&source=lnms&tbm=vid&sa=X&ved=2ahUKEwjd4fiIlKD7AhUoLFkFHa_aAWEQ_AUoAXoECAIQAw&biw=1332&bih=592&dpr=1#fpstate=ive&vld=cid:5e2ea0c6,vid:o3h6ptvCBYk
 [2]: https://pytorch.org/vision/main/models/generated/torchvision.models.detection.fasterrcnn_resnet50_fpn.html

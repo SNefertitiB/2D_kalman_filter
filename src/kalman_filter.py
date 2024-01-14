@@ -15,27 +15,27 @@ PERCENT_TO_DISCARD = 0.02
 PREDICTION_CONFIDENCE = 0.7   # note: 0.95 * 0.7^(10) = 0.026
 OD_MODEL = torch.hub.load("ultralytics/yolov5", "custom", path='best.pt', force_reload=True)
 
-coordinate = namedtuple("Coordinate", ["x", "y"])         # int x / int y
+Coordinate = namedtuple("Coordinate", ["x", "y"])         # int x / int y
+BoundingBox = namedtuple("BoundingBox", ['x1', 'y1', 'x2', 'y2'])   # box = [x1, y1, x2, y2]
 
-
-def get_centroid(od_box: list) -> coordinate:
+def get_centroid(od_box: BoundingBox) -> Coordinate:
     """
     Takes a bounding box from an object detection model and finds center of box
-    :param od_box: list [x1, y1, x2, y2]
-    :return: centroid coordinate (x_coordinate, y_coordinate)
+    :param od_box: BoundingBox (x1, y1, x2, y2)
+    :return: Coordinate of centroid (x_coordinate, y_coordinate)
     """
-    x_1 = od_box[0]
-    y_1 = od_box[1]
-    x_2 = od_box[2]
-    y_2 = od_box[3]
-    x_c = int((x_1 + x_2) / 2)
-    y_c = int((y_1 + y_2) / 2)
-    centroid = coordinate(x_c, y_c)
+    # x_1 = od_box[0]
+    # y_1 = od_box[1]
+    # x_2 = od_box[2]
+    # y_2 = od_box[3]
+    x_c = int((od_box.x1 + od_box.x2) / 2)
+    y_c = int((od_box.y1 + od_box.y2) / 2)
+    centroid = Coordinate(x_c, y_c)
     return centroid
 
 
 class Plate:
-    def __init__(self, id_number: int, coord: coordinate, confidence: float):
+    def __init__(self, id_number: int, coord: Coordinate, confidence: float):
         """
         Given the x,y coordinate of the center of a bounding box from
         the object detection model, creates a Plate object for tracking
@@ -57,15 +57,15 @@ class Plate:
         """
         new_x = self.prior.x + self.velocity_x
         new_y = self.prior.y + self.velocity_y
-        self.prior = coordinate(new_x, new_y)
+        self.prior = Coordinate(new_x, new_y)
         self.confidence *= PREDICTION_CONFIDENCE
 
-    def update(self, z: coordinate, confidence: float):
+    def update(self, z: Coordinate, confidence: float):
         """
         using a measurement from object detection model update
         velocity, previous location, and current prediction.
         Current prediction is average of measurment and predicted prior.
-        :param z: coordinate (x,y) center of bounding box
+        :param z: Coordinate (x,y) center of bounding box
         :param confidence: float model's confidence in the detection
         :return: None
         """
@@ -77,10 +77,10 @@ class Plate:
         # prior update
         new_x = int((self.prior.x + z.x) / 2)
         new_y = int((self.prior.y + z.y) / 2)
-        self.prior = coordinate(new_x, new_y)
+        self.prior = Coordinate(new_x, new_y)
         self.confidence = confidence          # model confidence in location
 
-    def match_measurment(self, z: coordinate):
+    def match_measurment(self, z: Coordinate):
         """
         checks if z coordinate (center of bounding box) matches plate
         :param z: coordinate (x,y) center of bounding box
@@ -89,6 +89,26 @@ class Plate:
         x_match = (self.prior.x - 5 < z.x) and (z.x < self.prior.x + 5)
         y_match = (self.prior.y - 5 < z.y) and (z.y < self.prior.y + 5)
         return x_match and y_match
+
+    def is_in_box(self, box:BoundingBox)->bool:
+        """
+        Checks to see if the current prediction is inside the passed bounding box
+        :param box: BoundingBox [x1, y1, x2, y2]
+        :return: True if prediction is inside box
+        """
+        x_test = box.x1 - 5 <= self.prior.x <= box.x2 + 5
+        y_test = box.y1 - 5 <= self.prior.y <= box.y2 + 5
+        if x_test and y_test:
+            return True
+        else:
+            return False
+
+    def get_distance(self, centroid:Coordinate) -> int:
+        x_dif = self.prior.x - centroid.x
+        y_dif = self.prior.y - centroid.y
+        d = np.sqrt(x_dif**2 + y_dif**2)
+        return int(d)
+
 
 
 class Kalman:
@@ -106,59 +126,107 @@ class Kalman:
         self.model = model
 
     def process_frame(self, frame):
-        """
-        Use object detection model to detect plates.
-        Compares detection to known plates and updates the matches
-        using the detection as the measurment.
-        Creates new plates for unmatched detections.
-        Predicts location of undected known plates without doing the
-        measurement update.
-
-        :param frame: numpy.ndarray image for object detection
-        :return: frame image with predictions and measurements drawn
-        :return: detected list of detected plates
-        """
         detected_plates = []
         detections = self.model(frame).pred[0]
         for det in detections:
             x1, y1, x2, y2, conf, cat = det.numpy()
-            box = [x1, y1, x2, y2]
-            match = False
-            center = get_centroid(box)
+            # draw box measurement bounding box
+            start = Coordinate(int(x1), int(y1))
+            end = Coordinate(int(x2), int(y2))
+            cv2.rectangle(frame, start, end, Z_COLOR, 2)
+            # match to plates
+            min_dist = 9999
+            bounding_box = BoundingBox(x1, y1, x2, y2)
+            center = get_centroid(bounding_box)
+            match = None
             for plate in self.plates:
-                if plate.match_measurment(center):
-                    match = True
-                    detected_plates.append(plate)
+                if plate.is_in_box(bounding_box):
                     self.plates.remove(plate)
-                    # prediction followed by kalman update
-                    plate.predict()
-                    plate.update(center, conf)
-                    # draw prediction marker
-                    cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
-                    break
-
-            if not match:  # create new plate with measurement
+                    d = plate.get_distance(center)
+                    if d < min_dist:
+                        min_dist = d
+                        match = plate
+            if match is not None:
+                # kalman update
+                match.update(center, conf)
+                # draw prediction
+                cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
+                # predict for next frame
+                plate.predict()
+                detected_plates.append(plate)
+            else: # no match then initialize
                 new_plate = Plate(self.new_ID, center, conf)
                 self.new_ID += 1
                 detected_plates.append(new_plate)
 
-            # draw measurement box
-            start = coordinate(int(x1), int(y1))
-            end = coordinate(int(x2), int(y2))
-            cv2.rectangle(frame, start, end, Z_COLOR, 2)
-
         plates = detected_plates
         for plate in self.plates:
-            plate.predict()        # predict location, no kalman update
-            if plate.confidence >= PERCENT_TO_DISCARD:
-                # draw prediction marker
-                cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
-                plates.append(plate)
             self.plates.remove(plate)
+            if plate.confidence >= PERCENT_TO_DISCARD:
+                # draw prediction
+                cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
+                # predict for next frame
+                plate.predict()
+                plates.append(plate)
 
         self.plates = plates
-
+        print(len(self.plates))
         return frame, detected_plates
+
+    # def process_frame(self, frame):
+    #     """
+    #     Use object detection model to detect plates.
+    #     Compares detection to known plates and updates the matches
+    #     using the detection as the measurment.
+    #     Creates new plates for unmatched detections.
+    #     Predicts location of undected known plates without doing the
+    #     measurement update.
+    #
+    #     :param frame: numpy.ndarray image for object detection
+    #     :return: frame image with predictions and measurements drawn
+    #     :return: detected list of detected plates
+    #     """
+    #     detected_plates = []
+    #     detections = self.model(frame).pred[0]
+    #     for det in detections:
+    #         x1, y1, x2, y2, conf, cat = det.numpy()
+    #         box = [x1, y1, x2, y2]
+    #         match = False
+    #         center = get_centroid(box)
+    #         for plate in self.plates:
+    #             if plate.match_measurment(center):
+    #                 match = True
+    #                 detected_plates.append(plate)
+    #                 self.plates.remove(plate)
+    #                 # prediction followed by kalman update
+    #                 plate.predict()
+    #                 plate.update(center, conf)
+    #                 # draw prediction marker
+    #                 cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
+    #                 break
+    #
+    #         if not match:  # create new plate with measurement
+    #             new_plate = Plate(self.new_ID, center, conf)
+    #             self.new_ID += 1
+    #             detected_plates.append(new_plate)
+    #
+    #         # draw measurement box
+    #         start = Coordinate(int(x1), int(y1))
+    #         end = Coordinate(int(x2), int(y2))
+    #         cv2.rectangle(frame, start, end, Z_COLOR, 2)
+    #
+    #     plates = detected_plates
+    #     for plate in self.plates:
+    #         plate.predict()        # predict location, no kalman update
+    #         if plate.confidence >= PERCENT_TO_DISCARD:
+    #             # draw prediction marker
+    #             cv2.drawMarker(frame, plate.prior, PRED_COLOR, PRED_TYPE, PRED_SIZE, PRED_THICKNESS)
+    #             plates.append(plate)
+    #         self.plates.remove(plate)
+    #
+    #     self.plates = plates
+    #
+    #     return frame, detected_plates
 
 
 def loop(filepath: str, od_model):
